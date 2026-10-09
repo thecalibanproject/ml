@@ -1,0 +1,20 @@
+{"id": "pii-001", "text": "Hi, I'm Jane Testperson, you can reach me at jane.testperson@example.com.", "spans": [{"start": 8, "end": 23, "label": "PERSON"}, {"start": 45, "end": 72, "label": "EMAIL"}], "lang": "en"}
+{"id": "pii-002", "text": "Call Bob Fakename on +1 555-010-0199 before Friday.", "spans": [{"start": 5, "end": 17, "label": "PERSON"}, {"start": 21, "end": 36, "label": "PHONE"}], "lang": "en"}
+{"id": "pii-003", "text": "Card on file: 4111 1111 1111 1111, expiry 12/30.", "spans": [{"start": 14, "end": 33, "label": "CREDIT_CARD"}], "lang": "en"}
+{"id": "pii-004", "text": "Please wire the refund to GB82 WEST 1234 5698 7654 32 (account holder Alice Example).", "spans": [{"start": 26, "end": 53, "label": "IBAN"}, {"start": 70, "end": 83, "label": "PERSON"}], "lang": "en"}
+{"id": "pii-005", "text": "Employee SSN 123-45-6789 was entered in the wrong field.", "spans": [{"start": 13, "end": 24, "label": "US_SSN"}], "lang": "en"}
+{"id": "pii-006", "text": "Login failures from 192.0.2.17 and 203.0.113.250 overnight.", "spans": [{"start": 20, "end": 30, "label": "IP_ADDRESS"}, {"start": 35, "end": 48, "label": "IP_ADDRESS"}], "lang": "en"}
+{"id": "pii-007", "text": "Our AWS key AKIAIOSFODNN7EXAMPLE leaked into the ticket, rotate it.", "spans": [{"start": 12, "end": 32, "label": "SECRET"}], "lang": "en"}
+{"id": "pii-008", "text": "The test token sk-test-FAKEFAKEFAKEFAKE0000 must never reach a provider.", "spans": [{"start": 15, "end": 43, "label": "SECRET"}], "lang": "en"}
+{"id": "pii-009", "text": "Carlos Placeholder lives in Springfield and works remotely.", "spans": [{"start": 0, "end": 18, "label": "PERSON"}, {"start": 28, "end": 39, "label": "LOCATION"}], "lang": "en"}
+{"id": "pii-010", "text": "Invoice 2024-0042 for Dana Sample, dana.sample@example.org, total 120.00 EUR.", "spans": [{"start": 22, "end": 33, "label": "PERSON"}, {"start": 35, "end": 58, "label": "EMAIL"}], "lang": "en"}
+{"id": "pii-011", "text": "Status page: https://status.example.com/incidents/42 - nothing personal here.", "spans": [{"start": 13, "end": 52, "label": "URL"}], "lang": "en"}
+{"id": "pii-012", "text": "No personal data in this sentence about quarterly revenue growth of 12%.", "spans": [], "lang": "en"}
+{"id": "pii-013", "text": "Ping Erin Dummy at (555) 010-0123 or erin@example.net.", "spans": [{"start": 5, "end": 15, "label": "PERSON"}, {"start": 19, "end": 33, "label": "PHONE"}, {"start": 37, "end": 53, "label": "EMAIL"}], "lang": "en"}
+{"id": "pii-014", "text": "Backup card 5555-5555-5555-4444 belongs to Frank Notreal.", "spans": [{"start": 12, "end": 31, "label": "CREDIT_CARD"}, {"start": 43, "end": 56, "label": "PERSON"}], "lang": "en"}
+{"id": "pii-015", "text": "Ship to Grace Mock, 1 Example Street, Testville.", "spans": [{"start": 8, "end": 18, "label": "PERSON"}, {"start": 38, "end": 47, "label": "LOCATION"}], "lang": "en"}
+{"id": "pii-016", "text": "The server at 198.51.100.4 logs to https://logs.example.internal/app.", "spans": [{"start": 14, "end": 26, "label": "IP_ADDRESS"}, {"start": 35, "end": 68, "label": "URL"}], "lang": "en"}
+{"id": "pii-017", "text": "Order 5550100 shipped on 2026-01-15 to warehouse B.", "spans": [], "lang": "en"}
+{"id": "pii-018", "text": "Heidi Fictional (SSN 219-09-9999) asked for her file.", "spans": [{"start": 0, "end": 15, "label": "PERSON"}, {"start": 21, "end": 32, "label": "US_SSN"}], "lang": "en"}
+{"id": "pii-019", "text": "German test IBAN DE89 3704 0044 0532 0130 00 from the documentation.", "spans": [{"start": 17, "end": 44, "label": "IBAN"}], "lang": "en"}
+{"id": "pii-020", "text": "Reply to no-reply+tests@example.com with ticket 7781.", "spans": [{"start": 9, "end": 35, "label": "EMAIL"}], "lang": "en"}

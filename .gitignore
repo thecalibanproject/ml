@@ -1,0 +1,43 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Model artifacts: big binaries never go in git. They are built, signed and
+# copied into the on-prem bundle by the deploy repo's bundle scripts.
+artifacts/**/*.onnx
+artifacts/**/*.onnx.data
+artifacts/**/*.bin
+artifacts/**/*.safetensors
+artifacts/**/*.npy
+artifacts/**/*.npz
+*.onnx
+*.onnx.data
+
+# Training outputs / caches
+runs/
+outputs/
+.hf_cache/
+wandb/
+
+# Probe outputs can contain model responses; keep them out of git by default.
+results/
+
+# Signing keys must never be committed.
+*.key
+*.minisign.key
+cosign.key
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
+
+# Fetched third-party PII NER artifacts (re-create with scripts/fetch_pii_ner.py).
+artifacts/pii_ner/

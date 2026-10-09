@@ -1,0 +1,798 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://caliban.local/schemas/artifact-manifest.schema.json",
+  "$defs": {
+    "ArtifactKind": {
+      "enum": [
+        "embedder",
+        "intent_head",
+        "pii_ner",
+        "router_profile"
+      ],
+      "title": "ArtifactKind",
+      "type": "string"
+    },
+    "ArtifactRef": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ArtifactKind"
+        },
+        "name": {
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "name",
+        "version"
+      ],
+      "title": "ArtifactRef",
+      "type": "object"
+    },
+    "BaseModelRef": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "e.g. 'answerdotai/ModernBERT-base'",
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "revision": {
+          "description": "Pinned commit hash of the weights used.",
+          "minLength": 1,
+          "title": "Revision",
+          "type": "string"
+        },
+        "licence": {
+          "description": "SPDX id from the model card.",
+          "minLength": 1,
+          "title": "Licence",
+          "type": "string"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Url"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "licence"
+      ],
+      "title": "BaseModelRef",
+      "type": "object"
+    },
+    "Calibration": {
+      "additionalProperties": false,
+      "description": "Post-hoc calibration the Rust side applies to raw head outputs.\n\n``p = softmax(logits / temperature)``. The head *exits* (accepts its own prediction)\nwhen ``p[label] >= thresholds.get(label, default_threshold)`` and, when set, the\nmargin between the top-2 probabilities is ``>= margin_threshold``. If ``oos_threshold``\nis set, a query whose ``oos_score`` is below it is out-of-scope (an explicit decision,\nnever an argmax over known intents).",
+      "properties": {
+        "method": {
+          "default": "temperature",
+          "enum": [
+            "none",
+            "temperature"
+          ],
+          "title": "Method",
+          "type": "string"
+        },
+        "temperature": {
+          "default": 1.0,
+          "exclusiveMinimum": 0,
+          "title": "Temperature",
+          "type": "number"
+        },
+        "thresholds": {
+          "additionalProperties": {
+            "maximum": 1,
+            "minimum": 0,
+            "type": "number"
+          },
+          "title": "Thresholds",
+          "type": "object"
+        },
+        "default_threshold": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Default Threshold"
+        },
+        "margin_threshold": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Margin Threshold"
+        },
+        "oos_threshold": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Oos Threshold"
+        },
+        "oos_score": {
+          "anyOf": [
+            {
+              "enum": [
+                "max_probability",
+                "top1_similarity",
+                "oos_head_probability"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Oos Score"
+        }
+      },
+      "title": "Calibration",
+      "type": "object"
+    },
+    "DataCard": {
+      "additionalProperties": false,
+      "properties": {
+        "training_datasets": {
+          "items": {
+            "$ref": "#/$defs/DatasetRef"
+          },
+          "title": "Training Datasets",
+          "type": "array"
+        },
+        "eval_datasets": {
+          "items": {
+            "$ref": "#/$defs/DatasetRef"
+          },
+          "title": "Eval Datasets",
+          "type": "array"
+        },
+        "languages": {
+          "description": "BCP-47 codes.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Languages",
+          "type": "array"
+        },
+        "intended_use": {
+          "minLength": 1,
+          "title": "Intended Use",
+          "type": "string"
+        },
+        "limitations": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Limitations"
+        },
+        "contains_personal_data": {
+          "default": false,
+          "description": "True if training data included real personal data. Shipping such an artifact needs a DPIA reference in `notes`.",
+          "title": "Contains Personal Data",
+          "type": "boolean"
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Notes"
+        }
+      },
+      "required": [
+        "intended_use"
+      ],
+      "title": "DataCard",
+      "type": "object"
+    },
+    "DatasetRef": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "source": {
+          "description": "URL, HF dataset id, or internal path. Pin a revision.",
+          "title": "Source",
+          "type": "string"
+        },
+        "revision": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Commit / version / sha256.",
+          "title": "Revision"
+        },
+        "licence": {
+          "description": "SPDX id where possible, e.g. 'apache-2.0', 'cc-by-4.0'.",
+          "title": "Licence",
+          "type": "string"
+        },
+        "n_examples": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "N Examples"
+        },
+        "synthetic": {
+          "default": false,
+          "title": "Synthetic",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "source",
+        "licence"
+      ],
+      "title": "DatasetRef",
+      "type": "object"
+    },
+    "EmbeddingSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "dim": {
+          "minimum": 1,
+          "title": "Dim",
+          "type": "integer"
+        },
+        "output": {
+          "description": "ONNX output tensor holding token or pooled embeddings.",
+          "title": "Output",
+          "type": "string"
+        },
+        "pooling": {
+          "description": "'none' means the graph already outputs a pooled vector.",
+          "enum": [
+            "cls",
+            "mean",
+            "last",
+            "none"
+          ],
+          "title": "Pooling",
+          "type": "string"
+        },
+        "normalize": {
+          "default": true,
+          "title": "Normalize",
+          "type": "boolean"
+        },
+        "query_prefix": {
+          "default": "",
+          "description": "e.g. 'query: ' for E5-family models",
+          "title": "Query Prefix",
+          "type": "string"
+        },
+        "passage_prefix": {
+          "default": "",
+          "title": "Passage Prefix",
+          "type": "string"
+        }
+      },
+      "required": [
+        "dim",
+        "output",
+        "pooling"
+      ],
+      "title": "EmbeddingSpec",
+      "type": "object"
+    },
+    "FileEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "description": "Relative POSIX path inside the artifact directory.",
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "description": "Lower-case hex SHA-256 of the file.",
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "size_bytes": {
+          "minimum": 0,
+          "title": "Size Bytes",
+          "type": "integer"
+        },
+        "role": {
+          "$ref": "#/$defs/FileRole",
+          "default": "other"
+        }
+      },
+      "required": [
+        "path",
+        "sha256",
+        "size_bytes"
+      ],
+      "title": "FileEntry",
+      "type": "object"
+    },
+    "FileRole": {
+      "enum": [
+        "model",
+        "model_data",
+        "tokenizer",
+        "config",
+        "labels",
+        "profile",
+        "exemplars",
+        "other"
+      ],
+      "title": "FileRole",
+      "type": "string"
+    },
+    "HeadSpec": {
+      "additionalProperties": false,
+      "description": "Maps one ONNX output tensor to a label space (multi-head classifiers).",
+      "properties": {
+        "name": {
+          "description": "e.g. intent, difficulty, oos",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Name",
+          "type": "string"
+        },
+        "output": {
+          "description": "Name of the ONNX output tensor holding this head's logits.",
+          "title": "Output",
+          "type": "string"
+        },
+        "activation": {
+          "default": "softmax",
+          "enum": [
+            "softmax",
+            "sigmoid",
+            "none"
+          ],
+          "title": "Activation",
+          "type": "string"
+        },
+        "labels": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Labels",
+          "type": "array"
+        },
+        "calibration": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Calibration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "name",
+        "output",
+        "labels"
+      ],
+      "title": "HeadSpec",
+      "type": "object"
+    },
+    "LicenceOverride": {
+      "additionalProperties": false,
+      "description": "A recorded human decision to ship something whose licence is not on the allow-list.",
+      "properties": {
+        "subject": {
+          "description": "Base model id or dataset name this override applies to.",
+          "title": "Subject",
+          "type": "string"
+        },
+        "licence": {
+          "title": "Licence",
+          "type": "string"
+        },
+        "approved_by": {
+          "minLength": 1,
+          "title": "Approved By",
+          "type": "string"
+        },
+        "approved_on": {
+          "format": "date",
+          "title": "Approved On",
+          "type": "string"
+        },
+        "reason": {
+          "minLength": 10,
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subject",
+        "licence",
+        "approved_by",
+        "approved_on",
+        "reason"
+      ],
+      "title": "LicenceOverride",
+      "type": "object"
+    },
+    "OnnxSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "file": {
+          "description": "Path of the .onnx file; must appear in `files`.",
+          "title": "File",
+          "type": "string"
+        },
+        "opset": {
+          "minimum": 7,
+          "title": "Opset",
+          "type": "integer"
+        },
+        "inputs": {
+          "items": {
+            "$ref": "#/$defs/TensorSpec"
+          },
+          "minItems": 1,
+          "title": "Inputs",
+          "type": "array"
+        },
+        "outputs": {
+          "items": {
+            "$ref": "#/$defs/TensorSpec"
+          },
+          "minItems": 1,
+          "title": "Outputs",
+          "type": "array"
+        },
+        "quantization": {
+          "default": "none",
+          "enum": [
+            "none",
+            "int8_dynamic",
+            "int8_static",
+            "fp16"
+          ],
+          "title": "Quantization",
+          "type": "string"
+        },
+        "heads": {
+          "description": "Optional extra heads (multi-head ModernBERT). The primary head is described by the top-level `labels` + `calibration`.",
+          "items": {
+            "$ref": "#/$defs/HeadSpec"
+          },
+          "title": "Heads",
+          "type": "array"
+        }
+      },
+      "required": [
+        "file",
+        "opset",
+        "inputs",
+        "outputs"
+      ],
+      "title": "OnnxSpec",
+      "type": "object"
+    },
+    "Producer": {
+      "additionalProperties": false,
+      "properties": {
+        "tool": {
+          "const": "caliban-ml",
+          "default": "caliban-ml",
+          "title": "Tool",
+          "type": "string"
+        },
+        "version": {
+          "default": "0.1.0",
+          "title": "Version",
+          "type": "string"
+        },
+        "git_commit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Git Commit"
+        }
+      },
+      "title": "Producer",
+      "type": "object"
+    },
+    "TensorSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "ONNX graph input/output name.",
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "dtype": {
+          "enum": [
+            "float32",
+            "float16",
+            "bfloat16",
+            "int64",
+            "int32",
+            "int8",
+            "uint8",
+            "bool"
+          ],
+          "title": "Dtype",
+          "type": "string"
+        },
+        "shape": {
+          "description": "Ints are fixed sizes, strings are symbolic dims.",
+          "items": {
+            "anyOf": [
+              {
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                "type": "string"
+              }
+            ]
+          },
+          "title": "Shape",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "dtype",
+        "shape"
+      ],
+      "title": "TensorSpec",
+      "type": "object"
+    },
+    "TokenizerSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "file": {
+          "description": "HF `tokenizers` JSON (tokenizer.json); must appear in `files`.",
+          "title": "File",
+          "type": "string"
+        },
+        "format": {
+          "const": "hf_tokenizers_json",
+          "default": "hf_tokenizers_json",
+          "title": "Format",
+          "type": "string"
+        },
+        "max_length": {
+          "maximum": 131072,
+          "minimum": 1,
+          "title": "Max Length",
+          "type": "integer"
+        },
+        "truncation_side": {
+          "default": "right",
+          "enum": [
+            "right",
+            "left"
+          ],
+          "title": "Truncation Side",
+          "type": "string"
+        }
+      },
+      "required": [
+        "file",
+        "max_length"
+      ],
+      "title": "TokenizerSpec",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "manifest_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Manifest Version",
+      "type": "integer"
+    },
+    "kind": {
+      "$ref": "#/$defs/ArtifactKind"
+    },
+    "name": {
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$",
+      "title": "Name",
+      "type": "string"
+    },
+    "version": {
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$",
+      "title": "Version",
+      "type": "string"
+    },
+    "description": {
+      "default": "",
+      "title": "Description",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "producer": {
+      "$ref": "#/$defs/Producer"
+    },
+    "files": {
+      "items": {
+        "$ref": "#/$defs/FileEntry"
+      },
+      "minItems": 1,
+      "title": "Files",
+      "type": "array"
+    },
+    "onnx": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/OnnxSpec"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "tokenizer": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TokenizerSpec"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "embedding": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EmbeddingSpec"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "labels": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Labels",
+      "type": "array"
+    },
+    "calibration": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Calibration"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "metrics": {
+      "additionalProperties": {
+        "type": "number"
+      },
+      "title": "Metrics",
+      "type": "object"
+    },
+    "data_card": {
+      "$ref": "#/$defs/DataCard"
+    },
+    "base_model": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/BaseModelRef"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "licence_overrides": {
+      "items": {
+        "$ref": "#/$defs/LicenceOverride"
+      },
+      "title": "Licence Overrides",
+      "type": "array"
+    },
+    "requires": {
+      "description": "Artifacts this one depends on, e.g. an intent head or router profile built in a specific embedder's vector space.",
+      "items": {
+        "$ref": "#/$defs/ArtifactRef"
+      },
+      "title": "Requires",
+      "type": "array"
+    }
+  },
+  "required": [
+    "kind",
+    "name",
+    "version",
+    "files",
+    "data_card"
+  ],
+  "title": "ArtifactManifest",
+  "type": "object",
+  "description": "Caliban model artifact manifest (v1). Produced by caliban-ml, verified by core before loading ONNX/JSON artifacts. Licence policy and kind-specific rules are enforced by caliban-ml; core re-checks hashes and tensor names."
+}

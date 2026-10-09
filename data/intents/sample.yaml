@@ -1,0 +1,35 @@
+# Sample intent exemplar set (synthetic). Format: caliban_ml/router/dataset.py.
+version: 1
+intents:
+  sql_analytics:
+    description: Questions answered by querying a tenant datasource.
+    utterances:
+      - how many invoices were overdue last month
+      - top 10 customers by revenue in Q3
+      - average order value per region this year
+      - list accounts with no activity in 90 days
+  summarization:
+    description: Condense a document, thread or meeting.
+    utterances:
+      - summarize this email thread for me
+      - give me the key points of the attached contract
+      - tl;dr of the meeting notes below
+      - write a one paragraph summary of this report
+  extraction:
+    description: Pull structured fields out of unstructured text.
+    utterances:
+      - extract the invoice number, date and total from this pdf text
+      - pull all company names and amounts into json
+      - get the shipping address from this message
+      - turn this receipt into a json object
+  code:
+    description: Write, explain or fix code.
+    utterances:
+      - write a python function to dedupe a list while keeping order
+      - why does this rust code not compile
+      - convert this bash script to python
+      - add unit tests for this typescript module
+oos:
+  - what's the weather like on mars today
+  - tell me a joke about penguins
+  - who won the football match yesterday

@@ -1,0 +1,210 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://caliban.local/schemas/router-profile.schema.json",
+  "$defs": {
+    "ArtifactKind": {
+      "enum": [
+        "embedder",
+        "intent_head",
+        "pii_ner",
+        "router_profile"
+      ],
+      "title": "ArtifactKind",
+      "type": "string"
+    },
+    "ArtifactRef": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ArtifactKind"
+        },
+        "name": {
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "name",
+        "version"
+      ],
+      "title": "ArtifactRef",
+      "type": "object"
+    },
+    "ModelProfile": {
+      "additionalProperties": false,
+      "properties": {
+        "model": {
+          "description": "Model id as registered in the tenant model registry.",
+          "title": "Model",
+          "type": "string"
+        },
+        "prior": {
+          "description": "Mean score over all of this model's probes.",
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Prior",
+          "type": "number"
+        },
+        "quality": {
+          "description": "Shrunk quality per cluster, aligned to clusters.",
+          "items": {
+            "type": "number"
+          },
+          "title": "Quality",
+          "type": "array"
+        },
+        "raw_mean": {
+          "description": "Unshrunk mean, null where count == 0.",
+          "items": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": "Raw Mean",
+          "type": "array"
+        },
+        "counts": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Counts",
+          "type": "array"
+        },
+        "n_errors": {
+          "default": 0,
+          "description": "Probe calls that failed (excluded).",
+          "minimum": 0,
+          "title": "N Errors",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "model",
+        "prior",
+        "quality",
+        "raw_mean",
+        "counts"
+      ],
+      "title": "ModelProfile",
+      "type": "object"
+    },
+    "ProfileCluster": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "n_probes": {
+          "description": "Distinct probe prompts in this cluster.",
+          "minimum": 0,
+          "title": "N Probes",
+          "type": "integer"
+        },
+        "centroid": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Centroid"
+        }
+      },
+      "required": [
+        "id",
+        "n_probes"
+      ],
+      "title": "ProfileCluster",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "profile_version": {
+      "default": 1,
+      "title": "Profile Version",
+      "type": "integer"
+    },
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "probe_set": {
+      "description": "Name/version of the probe set the scores came from.",
+      "title": "Probe Set",
+      "type": "string"
+    },
+    "prior_weight": {
+      "minimum": 0,
+      "title": "Prior Weight",
+      "type": "number"
+    },
+    "embedder": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ArtifactRef"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Embedder whose space the centroids live in."
+    },
+    "clusters": {
+      "items": {
+        "$ref": "#/$defs/ProfileCluster"
+      },
+      "minItems": 1,
+      "title": "Clusters",
+      "type": "array"
+    },
+    "models": {
+      "items": {
+        "$ref": "#/$defs/ModelProfile"
+      },
+      "minItems": 1,
+      "title": "Models",
+      "type": "array"
+    }
+  },
+  "required": [
+    "name",
+    "probe_set",
+    "prior_weight",
+    "clusters",
+    "models"
+  ],
+  "title": "RouterProfile",
+  "type": "object",
+  "description": "UniRoute-style per-model, per-cluster quality table (profile.json inside a router_profile artifact). Consumed by the Stage-4 model scorer."
+}

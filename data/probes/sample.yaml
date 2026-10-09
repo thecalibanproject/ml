@@ -1,0 +1,96 @@
+# Tiny sample probe set: 10 prompts across 5 clusters. Real onboarding sets are ~1-2k
+# prompts stratified by the global intent taxonomy (docs/research/02, "BYO model onboarding").
+# All content is synthetic. Scores are in [0, 1]; see caliban_ml/probes/checkers.py.
+version: 1
+name: caliban-sample-v1
+clusters:
+  - id: sql
+    description: Text-to-SQL and analytics over a tenant datasource
+  - id: extraction
+    description: Structured extraction into JSON
+  - id: summarization
+    description: Short summaries that must keep key facts
+  - id: math
+    description: Arithmetic and short quantitative reasoning
+  - id: code
+    description: Small code generation tasks
+
+probes:
+  - id: sql-001
+    cluster: sql
+    prompt: >-
+      Table invoices(id INT, customer_id INT, amount NUMERIC, status TEXT, due_date DATE).
+      Write one SQL query that counts invoices with status 'overdue'. Reply with SQL only.
+    check: {type: regex, pattern: "(?is)select\\s+count\\s*\\(.*from\\s+invoices.*where.*status\\s*=\\s*'overdue'"}
+    max_tokens: 200
+  - id: sql-002
+    cluster: sql
+    prompt: >-
+      Table orders(id INT, customer TEXT, total NUMERIC). Write a SQL query returning the
+      3 customers with the highest summed total, highest first. Reply with SQL only.
+    check: {type: contains, values: ["group by", "order by", "desc", "limit 3"], mode: all}
+    max_tokens: 200
+
+  - id: extraction-001
+    cluster: extraction
+    prompt: >-
+      Extract the fields from this text as a JSON object with keys "vendor", "amount" and
+      "currency" (amount as a number). Text: "Acme Widgets billed us 1250.50 EUR for March."
+      Reply with JSON only.
+    check: {type: json, required_keys: [vendor, amount, currency], equals: {amount: 1250.5, currency: EUR}}
+    max_tokens: 120
+  - id: extraction-002
+    cluster: extraction
+    prompt: >-
+      Return a JSON object {"priority": "low"|"medium"|"high"} for this support ticket:
+      "Production checkout is down for every customer since 09:00." JSON only.
+    check: {type: json, required_keys: [priority], equals: {priority: high}}
+    max_tokens: 60
+
+  - id: summarization-001
+    cluster: summarization
+    prompt: >-
+      Summarize in one sentence: "The Q3 board meeting moved from October 4 to October 11
+      because the CFO is travelling. The agenda is unchanged."
+    check: {type: contains, values: ["October 11"], mode: all}
+    max_tokens: 80
+  - id: summarization-002
+    cluster: summarization
+    prompt: >-
+      Summarize for an executive in at most two sentences: "Churn rose from 2.1% to 3.4%
+      quarter over quarter, driven by the SMB segment after the price change."
+    check:
+      type: judge
+      rubric: >-
+        Score 10 if the summary keeps both churn numbers (2.1% and 3.4%), names the SMB
+        segment and the price change as the driver, and is at most two sentences.
+        Subtract points for each missing fact or invented detail.
+    max_tokens: 120
+
+  - id: math-001
+    cluster: math
+    prompt: "What is 17 * 23? Reply with the number only."
+    check: {type: exact, value: "391"}
+    max_tokens: 10
+  - id: math-002
+    cluster: math
+    prompt: >-
+      A subscription costs 40 USD per month with a 15% discount when paid yearly.
+      What is the yearly price in USD? Reply with the number only.
+    check: {type: regex, pattern: "^\\s*\\$?408(\\.0+)?\\s*(USD)?\\s*$", fullmatch: true}
+    max_tokens: 20
+
+  - id: code-001
+    cluster: code
+    prompt: >-
+      Write a Python function is_palindrome(s: str) -> bool that ignores case and
+      non-alphanumeric characters. Reply with code only.
+    check: {type: regex, pattern: "def\\s+is_palindrome\\s*\\(\\s*s"}
+    max_tokens: 200
+  - id: code-002
+    cluster: code
+    messages:
+      - {role: system, content: "You are a senior Rust engineer. Reply with code only."}
+      - {role: user, content: "Write a Rust function `fn clamp01(x: f64) -> f64` that clamps x to [0, 1]."}
+    check: {type: contains, values: ["fn clamp01", "f64"], mode: all}
+    max_tokens: 200
