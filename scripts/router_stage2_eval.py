@@ -83,7 +83,9 @@ def extra_eval_sets(classes: set[str]) -> dict[str, tuple[list[str], list[str]]]
     return sets
 
 
-def ort_latency_ms(art: Path, texts: list[str]) -> float:
+def ort_latency_ms(art: Path, texts: list[str], model: Path | None = None) -> float:
+    """Median single-query ONNX Runtime CPU latency (4 threads) of ``model`` (default: the
+    artifact's model.onnx)."""
     import numpy as np
     import onnxruntime as ort
     from tokenizers import Tokenizer
@@ -95,7 +97,8 @@ def ort_latency_ms(art: Path, texts: list[str]) -> float:
     tok.enable_truncation(m.tokenizer.max_length)
     so = ort.SessionOptions()
     so.intra_op_num_threads = 4
-    sess = ort.InferenceSession(str(art / "model.onnx"), so, providers=["CPUExecutionProvider"])
+    sess = ort.InferenceSession(str(model or art / "model.onnx"), so,
+                                providers=["CPUExecutionProvider"])
     outs = [o.name for o in m.onnx.outputs]
     times = []
     for i, t in enumerate(texts * 2):
@@ -107,6 +110,58 @@ def ort_latency_ms(art: Path, texts: list[str]) -> float:
     return statistics.median(times)
 
 
+def _logits(sess, art: Path, texts: list[str]):
+    import numpy as np
+    from tokenizers import Tokenizer
+
+    from caliban_ml.artifacts import load_manifest
+
+    m = load_manifest(art)
+    cfg = json.loads((art / "config.json").read_text())
+    tok = Tokenizer.from_file(str(art / "tokenizer.json"))
+    tok.enable_truncation(m.tokenizer.max_length)
+    out = []
+    for i in range(0, len(texts), 32):
+        enc = tok.encode_batch(texts[i:i + 32])
+        ids = np.full((len(enc), max(len(e.ids) for e in enc)), cfg["pad_id"], dtype=np.int64)
+        mask = np.zeros_like(ids)
+        for j, e in enumerate(enc):
+            ids[j, :len(e.ids)] = e.ids
+            mask[j, :len(e.ids)] = 1
+        out.append(sess.run([m.onnx.outputs[0].name],
+                            {"input_ids": ids, "attention_mask": mask})[0])
+    return np.concatenate(out)
+
+
+def int8_probe(art: Path, texts: list[str]) -> dict[str, float]:
+    """Quantize a fp32 intent_head artifact two ways (the conservative settings in
+    caliban_ml.router.export and ORT's defaults) and measure argmax agreement with fp32 on
+    ``texts``. Measurement only: nothing is shipped."""
+    import tempfile
+
+    import numpy as np
+    import onnxruntime as ort
+
+    from caliban_ml.router.export import quantize_int8_dynamic
+
+    def sess(p: Path):
+        return ort.InferenceSession(str(p), providers=["CPUExecutionProvider"])
+
+    ref = _logits(sess(art / "model.onnx"), art, texts)
+    out: dict[str, float] = {}
+    with tempfile.TemporaryDirectory() as tmp:
+        for label, legacy in (("conservative", False), ("ort_defaults", True)):
+            q = Path(tmp) / f"{label}.onnx"
+            quantize_int8_dynamic(art / "model.onnx", q, legacy_defaults=legacy)
+            got = _logits(sess(q), art, texts)
+            out[f"int8_{label}_argmax_agree"] = float((ref.argmax(1) == got.argmax(1)).mean())
+            out[f"int8_{label}_max_abs_diff"] = float(np.abs(ref - got).max())
+            out[f"int8_{label}_mb"] = q.stat().st_size / 2**20
+            if not legacy:
+                out["int8_conservative_latency_ms_p50"] = ort_latency_ms(art, texts[:50], q)
+    return out
+
+
 SCORERS = (("trained head", ""), ("kNN, base encoder", "knn_base_"),
            ("kNN, fine-tuned encoder", "knn_tuned_"))
 COLUMNS = (("test acc", "test_in_scope_accuracy"),
@@ -115,6 +170,7 @@ COLUMNS = (("test acc", "test_in_scope_accuracy"),
            ("para_en acc", "para_en_in_scope_accuracy"),
            ("fr acc", "fr_in_scope_accuracy"),
            ("ar acc", "ar_in_scope_accuracy"),
+           ("fr+ar in-scope accept", "accept"),
            ("fr+ar OOS rej", None))
 
 
@@ -129,18 +185,36 @@ def _mean(xs: list[float]) -> float | None:
 
 def render_report(summary: dict) -> str:
     """Markdown tables: every scorer on the same splits, plus held-out-intent folds."""
-    lines = [f"GPU: {summary['gpu']}, torch {summary['torch']}, exemplars: "
-             f"{summary['n_exemplars']} utterances over {len(summary['intents'])} intents.", ""]
+    vers = ", ".join(f"{k} {v}" for k, v in summary.get("versions", {}).items())
+    lines = [f"GPU: {summary['gpu']}, torch {summary['torch']}"
+             + (f" (CUDA {summary['cuda']})" if summary.get("cuda") else "")
+             + (f", {vers}" if vers else "") + f". Exemplars: {summary['n_exemplars']} "
+             f"utterances over {len(summary['intents'])} intents.", ""]
     for key, run in summary["runs"].items():
         m, exp, folds = run["main"], run["export"], run["folds"]
+        nan = float("nan")
+        latency = exp.get("ort_cpu_latency_ms_p50", exp.get("ort_cpu_int8_latency_ms_p50", nan))
         lines += [f"### {key}", "",
                   f"Train {m.get('train_seconds', 0):.1f} s, peak VRAM "
                   f"{m.get('train_peak_vram_allocated_mb', 0):.0f} MiB allocated / "
-                  f"{m.get('train_peak_vram_reserved_mb', 0):.0f} MiB reserved. Export: fp32 "
-                  f"max|diff| {exp.get('export_fp32_max_abs_diff', float('nan')):.2e}, INT8 "
-                  f"argmax agreement {exp.get('export_int8_argmax_agree', float('nan')):.4f}, "
-                  f"model.onnx {exp.get('model_onnx_mb', 0):.0f} MiB, ORT CPU p50 "
-                  f"{exp.get('ort_cpu_int8_latency_ms_p50', 0):.1f} ms per query.", "",
+                  f"{m.get('train_peak_vram_reserved_mb', 0):.0f} MiB reserved. Export "
+                  f"({exp.get('quantization', 'n/a')}): fp32 max|diff| "
+                  f"{exp.get('export_fp32_max_abs_diff', nan):.2e}, model.onnx "
+                  f"{exp.get('model_onnx_mb', 0):.0f} MiB, ORT CPU p50 "
+                  f"{latency:.1f} ms per query.", ""]
+        probe = run.get("int8_probe") or {}
+        if probe:
+            lines += [f"INT8 probe (argmax agreement with fp32 / size / latency): conservative "
+                      f"{probe.get('int8_conservative_argmax_agree', nan):.3f} / "
+                      f"{probe.get('int8_conservative_mb', nan):.0f} MiB / "
+                      f"{probe.get('int8_conservative_latency_ms_p50', nan):.1f} ms, ORT "
+                      f"defaults {probe.get('int8_ort_defaults_argmax_agree', nan):.3f}.", ""]
+        emb = run.get("embedder_export") or {}
+        if emb:
+            lines += [f"Embedder export: fp32 min cosine "
+                      f"{emb.get('export_fp32_cosine_agree', nan):.6f}, model.onnx "
+                      f"{emb.get('model_onnx_mb', 0):.0f} MiB.", ""]
+        lines += [
                   "| scorer | " + " | ".join(c for c, _ in COLUMNS)
                   + " | held-out intent OOS rej (mean of folds) | fold test acc (mean) |",
                   "|---" * (len(COLUMNS) + 3) + "|"]
@@ -150,6 +224,9 @@ def render_report(summary: dict) -> str:
                 if col is None:
                     cells.append(_fmt(_mean([m.get(f"{prefix}fr_oos_rejection"),
                                              m.get(f"{prefix}ar_oos_rejection")])))
+                elif col == "accept":
+                    cells.append(_fmt(_mean([m.get(f"{prefix}fr_in_scope_acceptance"),
+                                             m.get(f"{prefix}ar_in_scope_acceptance")])))
                 else:
                     cells.append(_fmt(m.get(prefix + col)))
             rej = _mean([f.get(f"{prefix}heldout_intents_oos_rejection") for f in folds.values()])
@@ -157,7 +234,8 @@ def render_report(summary: dict) -> str:
             lines.append(f"| {label} | " + " | ".join(cells) + f" | {_fmt(rej)} | {_fmt(acc)} |")
         if any("heldout_intents_oos_head_oos_rejection" in f for f in folds.values()):
             rej = _mean([f.get("heldout_intents_oos_head_oos_rejection") for f in folds.values()])
-            lines.append(f"| trained head, oos head only | | | | | | | | {_fmt(rej)} | |")
+            lines.append("| trained head, oos head only |" + " |" * len(COLUMNS)
+                         + f" {_fmt(rej)} | |")
         if folds:
             lines += ["", "Held-out intent OOS rejection per fold (head / kNN base / kNN tuned): "
                       + ", ".join(f"{k} {_fmt(f.get('heldout_intents_oos_rejection'))}/"
@@ -181,13 +259,19 @@ def main() -> None:
     ap.add_argument("--no-folds", action="store_true", help="Skip leave-one-intent-out folds.")
     ap.add_argument("--seed", type=int, default=13)
     ap.add_argument("--min-free-mb", type=int, default=6000)
+    ap.add_argument("--quantization", choices=["none", "int8_dynamic"], default="none",
+                    help="Quantization of the exported intent_head artifacts (gated on parity).")
+    ap.add_argument("--no-int8-probe", action="store_true",
+                    help="Skip measuring INT8 agreement on fp32 exports.")
+    ap.add_argument("--no-embedder-export", action="store_true",
+                    help="Skip exporting the fine-tuned encoder as an embedder artifact.")
     args = ap.parse_args()
     backbones = args.backbone or ["modernbert_multihead", "setfit"]
 
     import torch
 
     from caliban_ml.router import IntentDataset
-    from caliban_ml.router.export import export_onnx
+    from caliban_ml.router.export import export_embedder, export_onnx
     from caliban_ml.router.train import IntentHeadConfig, train_intent_head
 
     if not torch.cuda.is_available():
@@ -195,7 +279,18 @@ def main() -> None:
     ds = IntentDataset.from_yaml(args.exemplars)
     extra = extra_eval_sets(set(ds.labels))
     args.out.mkdir(parents=True, exist_ok=True)
+    import importlib.metadata as md
+    import platform
+
+    versions = {"python": platform.python_version()}
+    for dist in ("transformers", "sentence-transformers", "setfit", "onnx", "onnxruntime",
+                 "tokenizers", "numpy"):
+        try:
+            versions[dist] = md.version(dist)
+        except md.PackageNotFoundError:
+            versions[dist] = "missing"
     summary: dict = {"gpu": torch.cuda.get_device_name(0), "torch": torch.__version__,
+                     "cuda": torch.version.cuda, "versions": versions,
                      "exemplars": str(args.exemplars), "n_exemplars": len(ds.examples()[0]),
                      "intents": ds.labels, "runs": {}}
     for spec in args.base:
@@ -218,14 +313,28 @@ def main() -> None:
             ckpt = train_intent_head(ds, base_cfg, extra_eval=extra)
             metrics = json.loads((ckpt / "metrics.json").read_text())
             art = run_dir / "main" / "artifact"
-            export_onnx(ckpt, art, name=f"stage2-{name}-{backbone.replace('_', '-')}",
-                        version="0.1.0", quantization="int8_dynamic", overwrite=True)
+            slug = f"stage2-{name}-{backbone.replace('_', '-')}"
+            export_onnx(ckpt, art, name=slug, version="0.1.0", quantization=args.quantization,
+                        overwrite=True)
             from caliban_ml.artifacts import load_manifest
 
-            exp = {k: v for k, v in load_manifest(art).metrics.items()
-                   if k.startswith(("export_", "model_"))}
-            exp["ort_cpu_int8_latency_ms_p50"] = ort_latency_ms(art, extra["para_en"][0])
+            def export_metrics(d: Path) -> dict:
+                return {k: v for k, v in load_manifest(d).metrics.items()
+                        if k.startswith(("export_", "model_"))}
+
+            exp = {**export_metrics(art), "quantization": args.quantization}
+            exp["ort_cpu_latency_ms_p50"] = ort_latency_ms(art, extra["para_en"][0])
             run = {"main": metrics, "export": exp, "folds": {}}
+            if args.quantization == "none" and not args.no_int8_probe:
+                probe_texts = [t for s in ("test", "para_en", "fr", "ar")
+                               for t in (json.loads((ckpt / "splits.json").read_text())
+                                         ["test"]["texts"] if s == "test" else extra[s][0])]
+                run["int8_probe"] = int8_probe(art, probe_texts)
+            if not args.no_embedder_export:
+                emb_dir = run_dir / "main" / "embedder"
+                export_embedder(ckpt, emb_dir, name=f"{slug}-embedder", version="0.1.0",
+                                quantization=args.quantization, overwrite=True)
+                run["embedder_export"] = export_metrics(emb_dir)
             if not args.no_folds:
                 for intent in ds.labels:
                     print(f"== {key}: hold out {intent}", flush=True)

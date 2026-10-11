@@ -9,17 +9,30 @@
 # OUT        output dir (default runs/stage2-eval, git-ignored).
 #
 # Environment: VENV (default .venv-train), TORCH_INDEX (default the PyTorch CUDA 13.0 index),
-# STAGE2_BASES (default "modernbert mmbert"), HF_TOKEN (optional), MIN_FREE_MB (default 6000).
+# STAGE2_BASES (default "modernbert mmbert"), HF_TOKEN (optional), MIN_FREE_MB (default 6000),
+# QUANTIZATION (none | int8_dynamic, default none; fp32 artifacts still get an INT8 probe).
+#
+# HOME must be set: pip, torch and the Hugging Face libraries put caches under it. Hosts
+# driven by AWS SSM Run Command start shells without HOME, so it is derived from the passwd
+# entry here (and falls back to a directory inside the repo).
 #
 # Steps: install [train,export,dev] into a separate venv -> CPU smoke test (tiny random
 # ModernBERT: train, export, ONNX parity; catches library API drift in minutes) -> fetch the
 # pinned base models (SHA-256 checked) -> GPU smoke test on a real base model -> full run
 # (scripts/router_stage2_eval.py: both backbones per base, kNN baselines, held-out intents,
 # English paraphrases, French and Arabic, INT8 export + parity) -> strict manifest verify of
-# every exported artifact. Results: $OUT/report.md and $OUT/summary.json.
+# every exported artifact (intent heads and the fine-tuned encoders as embedders).
+# Results: $OUT/report.md and $OUT/summary.json.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+if [ -z "${HOME:-}" ]; then
+  HOME="$(getent passwd "$(id -un)" | cut -d: -f6 || true)"
+  [ -n "$HOME" ] && [ -w "$HOME" ] || HOME="$PWD/.home"
+  mkdir -p "$HOME"
+  export HOME
+  echo "HOME was unset; using $HOME"
+fi
 EXEMPLARS="${1:-../core/crates/caliban-route/data/exemplars.default.json}"
 OUT="${2:-runs/stage2-eval}"
 VENV="${VENV:-.venv-train}"
@@ -56,10 +69,11 @@ echo "== full run"
 args=()
 for b in "${BASES[@]}"; do args+=(--base "$b"); done
 "$PY" scripts/router_stage2_eval.py --exemplars "$EXEMPLARS" --out "$OUT" \
-  --min-free-mb "${MIN_FREE_MB:-6000}" "${args[@]}"
+  --min-free-mb "${MIN_FREE_MB:-6000}" --quantization "${QUANTIZATION:-none}" "${args[@]}"
 
 echo "== verify exported artifacts"
-for d in "$OUT"/*/*/main/artifact; do
+for d in "$OUT"/*/*/main/artifact "$OUT"/*/*/main/embedder; do
+  [ -d "$d" ] || continue
   "$VENV/bin/caliban-ml" manifest verify --strict "$d"
 done
 echo "done: $OUT/report.md"
