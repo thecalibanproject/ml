@@ -98,3 +98,16 @@ def predict_logits(model: PooledHeads, tokenizer, texts: list[str], *, max_lengt
         for n, t in zip(model.head_names, logits, strict=True):
             outs[n].append(t.float().cpu().numpy())
     return {n: np.concatenate(v, axis=0) for n, v in outs.items()}
+
+
+class EmbeddingOnly(nn.Module):
+    """The encoder of a :class:`PooledHeads` without its heads: pooled, L2-normalised
+    sentence embeddings (the graph of an exported ``embedder`` artifact)."""
+
+    def __init__(self, model: PooledHeads):
+        super().__init__()
+        self.model = model
+
+    def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+        h = self.model.embed(input_ids, attention_mask)
+        return nn.functional.normalize(h, p=2.0, dim=-1)

@@ -36,11 +36,16 @@ from caliban_ml.router.checkpoint import (
 )
 from caliban_ml.router.embed import embed_onnx_artifact, pool_hidden
 from caliban_ml.router.export import (
+    INT8_DYNAMIC_OPTIONS,
     ONNX_CLASSIFIER_TYPE,
     ParityError,
+    build_embedder_manifest,
     build_intent_head_manifest,
     check_no_remote_code,
     clean_tokenizer_json,
+    cosine_parity,
+    export_embedder,
+    export_onnx,
     onnx_spec,
     pad_batch,
     parity_metrics,
@@ -415,3 +420,48 @@ def test_multilingual_eval_set_parses():
                          "translate"]
     texts, _ = ds.examples()
     assert any("؀" <= ch <= "ۿ" for t in texts for ch in t)  # Arabic present
+
+
+def test_cosine_parity():
+    a = np.array([[1.0, 0.0], [0.6, 0.8]])
+    d, c = cosine_parity(a, a * 2)
+    assert d == pytest.approx(1.0) and c == pytest.approx(1.0)
+    assert cosine_parity(a, a[:, ::-1])[1] == pytest.approx(0.0)
+    with pytest.raises(ParityError):
+        cosine_parity(a, a[:1])
+
+
+def test_int8_defaults_only_quantize_weight_matmuls():
+    # ORT's defaults (every MatMul incl. Q K^T, per-tensor, Gather) broke ModernBERT-base.
+    assert INT8_DYNAMIC_OPTIONS["op_types_to_quantize"] == ["MatMul"]
+    assert INT8_DYNAMIC_OPTIONS["extra_options"]["MatMulConstBOnly"] is True
+    assert INT8_DYNAMIC_OPTIONS["per_channel"] is True
+
+
+@pytest.mark.parametrize("fn", [export_onnx, export_embedder])
+def test_export_refuses_unknown_quantization_before_loading_anything(fn, tmp_path: Path):
+    with pytest.raises(ValueError, match="unsupported quantization"):
+        fn(tmp_path, tmp_path / "out", name="x", version="1.0.0", quantization="fp16")
+    with pytest.raises(ValueError, match="opset"):
+        fn(tmp_path, tmp_path / "out", name="x", version="1.0.0", opset=13)
+
+
+def test_embedder_manifest_contract(tmp_path: Path):
+    d = tmp_path / "emb"
+    d.mkdir()
+    (d / "model.onnx").write_bytes(b"\x08\x07fake" * 10)
+    (d / "tokenizer.json").write_text('{"version": "1.0", "model": {"type": "BPE"}}')
+    (d / "config.json").write_text(json.dumps({"type": "onnx_embedder", "pad_id": 0}))
+    build_embedder_manifest(d, meta(), name="tenant-embedder", version="1.0.0", opset=17,
+                            quantization="none", metrics={"export_cosine_agree": 1.0})
+    rep = verify_artifact_dir(d, strict=True)
+    assert rep.ok, rep.errors
+    m = rep.manifest
+    assert m.kind.value == "embedder"
+    assert m.embedding.output == "embedding" and m.embedding.pooling == "none"
+    assert m.embedding.dim == 768 and m.embedding.normalize is True
+    assert m.onnx.outputs[0].shape == ["batch", 768]
+    # a kNN calibration fitted in this space can require it
+    from caliban_ml.artifacts import ArtifactRef
+
+    assert m.ref() == ArtifactRef(kind="embedder", name="tenant-embedder", version="1.0.0")

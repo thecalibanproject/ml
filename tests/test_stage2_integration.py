@@ -248,3 +248,88 @@ def test_gpu_real_base_model(tmp_path: Path):
     assert metrics["train_peak_vram_allocated_mb"] > 0
     art = export_onnx(ckpt, tmp_path / "art", name="gpu-smoke", version="0.1.0")
     assert verify_artifact_dir(art, strict=True).ok
+
+
+def test_int8_settings_survive_residual_outliers(tmp_path: Path):
+    """ModernBERT-family encoders carry large-magnitude outlier dimensions. With a few
+    residual dims scaled up 100x, ORT's default dynamic INT8 visibly bends the embedding
+    space while the conservative settings stay at fp32 quality. (This reproduces the failure
+    mode at small scale; the real 22-layer models are probed on every GPU run.)"""
+    import onnxruntime as ort
+    import torch
+    from transformers import ModernBertConfig, ModernBertModel
+
+    from caliban_ml.router import _torch as T
+    from caliban_ml.router.export import _torch_export, cosine_parity, quantize_int8_dynamic
+
+    torch.manual_seed(0)
+    cfg = ModernBertConfig(vocab_size=200, hidden_size=64, intermediate_size=128,
+                           num_hidden_layers=4, num_attention_heads=4,
+                           max_position_embeddings=256, global_attn_every_n_layers=2,
+                           local_attention=16, pad_token_id=0, cls_token_id=2, sep_token_id=3,
+                           bos_token_id=2, eos_token_id=3, attn_implementation="eager")
+    enc = ModernBertModel(cfg).eval()
+    with torch.no_grad():
+        enc.embeddings.tok_embeddings.weight[:, :2] *= 100.0
+        for layer in enc.layers:
+            layer.mlp.Wo.weight[:2] *= 100.0
+    module = T.EmbeddingOnly(T.PooledHeads(enc, {}, pooling="mean")).eval()
+    rng = np.random.default_rng(0)
+    batches = []
+    for _ in range(4):
+        lens = rng.integers(5, 40, 16)
+        ids = np.zeros((16, lens.max()), dtype=np.int64)
+        mask = np.zeros_like(ids)
+        for i, n in enumerate(lens):
+            ids[i, 0], ids[i, n - 1] = 2, 3
+            ids[i, 1:n - 1] = rng.integers(5, 200, n - 2)
+            mask[i, :n] = 1
+        batches.append((ids, mask))
+    fp32 = tmp_path / "fp32.onnx"
+    _torch_export(torch, module, batches[0], fp32, ["embedding"], 17)
+
+    def run(path: Path) -> np.ndarray:
+        s = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+        return np.concatenate([s.run(None, {"input_ids": i, "attention_mask": m})[0]
+                               for i, m in batches])
+
+    ref = run(fp32)
+    cos = {}
+    for legacy in (True, False):
+        q = tmp_path / f"int8-{legacy}.onnx"
+        quantize_int8_dynamic(fp32, q, legacy_defaults=legacy)
+        cos[legacy] = cosine_parity(ref, run(q))[1]
+    assert cos[False] >= 0.999, cos
+    assert cos[True] < 0.99, cos
+
+
+def test_export_embedder_roundtrip(tiny_modernbert: Path, tmp_path: Path):
+    """The fine-tuned encoder as an `embedder` artifact: embed_onnx_artifact (the Rust-like
+    path) reproduces the checkpoint's pooled, normalised torch embeddings."""
+    import torch
+    from transformers import AutoTokenizer
+
+    from caliban_ml.router import _torch as T
+    from caliban_ml.router.checkpoint import ENCODER_DIR
+    from caliban_ml.router.embed import embed_onnx_artifact
+    from caliban_ml.router.export import export_embedder
+
+    ds = IntentDataset.from_yaml(DATA / "intents" / "sample.yaml")
+    ckpt = train_intent_head(ds, _config(tiny_modernbert, tmp_path / "ckpt", epochs=1,
+                                         knn_baseline=False))
+    art = export_embedder(ckpt, tmp_path / "emb", name="sample-embedder", version="0.1.0")
+    m = load_manifest(art)
+    assert m.kind == ArtifactKind.EMBEDDER and m.embedding.pooling == "none"
+    assert m.metrics["export_fp32_cosine_agree"] > 0.9999
+    texts = ["summarize this email thread for me", "write a python function",
+             "top 10 customers by revenue in Q3"]
+    got = embed_onnx_artifact(art, texts, batch_size=2)
+    _, model = T.load_checkpoint(ckpt)
+    hf = AutoTokenizer.from_pretrained(str(ckpt / ENCODER_DIR))
+    enc = hf(texts, padding=True, truncation=True, max_length=32, return_tensors="pt")
+    with torch.no_grad():
+        ref = T.EmbeddingOnly(model)(enc["input_ids"], enc["attention_mask"]).numpy()
+    assert np.abs(got - ref).max() < 1e-4
+    int8 = export_embedder(ckpt, tmp_path / "emb8", name="sample-embedder", version="0.1.0",
+                           quantization="int8_dynamic", min_cosine=0.0)
+    assert load_manifest(int8).metrics["export_int8_cosine_agree"] > 0.9

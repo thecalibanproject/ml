@@ -254,19 +254,30 @@ def router_export(
     out: Path = typer.Option(..., help="Artifact dir, e.g. artifacts/intent_head/<name>/<ver>."),
     name: str = typer.Option(..., help="Artifact name (slug)."),
     version: str = typer.Option(..., help="Semver."),
-    quantization: Quant = typer.Option(Quant.int8_dynamic),
+    quantization: Quant = typer.Option(
+        Quant.none, help="int8_dynamic quantizes weight MatMuls only and is gated on parity; "
+                         "not yet validated on real ModernBERT-family models."),
     opset: int = typer.Option(17, min=17),
     parity_atol: float = typer.Option(1e-3),
-    min_argmax_agree: float = typer.Option(0.995),
+    min_argmax_agree: float = typer.Option(0.995, help="INT8 gate for intent heads."),
+    min_cosine: float = typer.Option(0.99, help="INT8 gate for --embedder."),
+    embedder: bool = typer.Option(
+        False, "--embedder", help="Export only the fine-tuned encoder as an `embedder` "
+                                  "artifact (pooled, L2-normalised) for the Stage-1 kNN."),
     overwrite: bool = typer.Option(False),
 ) -> None:
-    """Export a checkpoint to an ONNX intent_head artifact with a parity check."""
+    """Export a checkpoint to an ONNX intent_head (or embedder) artifact with a parity check."""
     from caliban_ml.artifacts import load_manifest
-    from caliban_ml.router.export import export_onnx
+    from caliban_ml.router.export import export_embedder, export_onnx
 
-    d = export_onnx(checkpoint, out, name=name, version=version, opset=opset,
-                    quantization=quantization.value, parity_atol=parity_atol,
-                    min_argmax_agree=min_argmax_agree, overwrite=overwrite)
+    if embedder:
+        d = export_embedder(checkpoint, out, name=name, version=version, opset=opset,
+                            quantization=quantization.value, parity_atol=parity_atol,
+                            min_cosine=min_cosine, overwrite=overwrite)
+    else:
+        d = export_onnx(checkpoint, out, name=name, version=version, opset=opset,
+                        quantization=quantization.value, parity_atol=parity_atol,
+                        min_argmax_agree=min_argmax_agree, overwrite=overwrite)
     m = load_manifest(d)
     typer.echo(json.dumps({k: v for k, v in m.metrics.items() if k.startswith(("export_",
                                                                                "model_"))},
