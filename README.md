@@ -11,7 +11,7 @@ Offline tooling that packages, evaluates and verifies the small models Caliban r
 
 Caliban is a sovereign AI gateway: one OpenAI- and Anthropic-compatible endpoint for a company, with intent routing, PII pseudonymisation, an ontology layer, caching, agents ("nodes") and on-prem open-weight models. Its core is a single Rust binary. This repo is the offline side of the models that binary loads.
 
-> **Status:** in active development with design partners. The PII NER packaging path, the artifact contract, the licence gate, kNN calibration, router profiles, the probe runner and the PII metrics are implemented and tested. Stage-2 intent head training (SetFit and a ModernBERT/mmBERT multi-head) and its ONNX export with a parity check are implemented; core does not load Stage-2 heads yet (see [Current state](#current-state)).
+> **Status:** in active development with design partners. The PII NER packaging path, the artifact contract, the licence gate, kNN calibration, router profiles, the probe runner and the PII metrics are implemented and tested. Stage-2 intent head training (SetFit and a ModernBERT/mmBERT multi-head), its ONNX export with a parity check, and a kNN-baseline evaluation are implemented and were run on a GPU; core does not load Stage-2 heads (see [Current state](#current-state)).
 
 ## Contents
 
@@ -45,7 +45,7 @@ Everything runs offline. A base model may be downloaded **once**, onto a build o
 | Router profile (`router_profile`) | `caliban-ml probes run ...` then `caliban-ml router profile ...` (JSON only, no weights). |
 | Stage-1 kNN calibration (`intent_head`) | `caliban-ml router embed ...` then `caliban-ml router knn-eval ...` (needs a local sentence-transformers model). |
 | Stage-2 classifier (`intent_head` with ONNX) | `caliban-ml router train ...` then `caliban-ml router export ...` (`[train]` + `[export]`, a local base model, a GPU recommended). |
-| ONNX embedder (`embedder`) | No packaging script yet; `router embed --embedder-artifact` already runs one. |
+| ONNX embedder (`embedder`) | `caliban-ml router export --embedder ...` exports a trained checkpoint's fine-tuned encoder (pooled and normalised in the graph); `router embed --embedder-artifact` runs one. |
 
 The upstream models keep their own licences. See [Licence policy](#licence-policy-for-weights-and-data) and the model notes in core's [`crates/caliban-pii/MODELS.md`](https://github.com/thecalibanproject/core/blob/main/crates/caliban-pii/MODELS.md).
 
@@ -73,7 +73,7 @@ CLI (`caliban-ml --help`):
 | `caliban-ml manifest schema [--check]` | Regenerates (or checks) `schemas/*.schema.json` from the pydantic models. |
 | `caliban-ml router embed --dataset data/intents/sample.yaml --model-dir <local ST model> --out-prefix runs/intents` | Splits the intent exemplars and embeds them into `.npz` files (`[train]`). `--embedder-artifact <dir>` uses a shipped ONNX embedder instead (`[export]`), so thresholds are fitted in the vector space core uses. |
 | `caliban-ml router train --dataset <intents.yaml> --base-model-path <dir> --base-model-id ... --base-model-revision ... --base-model-licence ... --out runs/head` | Trains a Stage-2 intent head (`--backbone modernbert_multihead` or `setfit`), calibrates it on the validation split, and reports test, held-out-intent and kNN-baseline metrics (`[train]`). |
-| `caliban-ml router export --checkpoint runs/head --out artifacts/intent_head/<name>/<version> --name <name> --version <semver>` | Exports the checkpoint to an `intent_head` artifact: ONNX (INT8 by default), `tokenizer.json`, labels, config and manifest, after a torch vs ONNX Runtime parity check (`[train]` + `[export]`). |
+| `caliban-ml router export --checkpoint runs/head --out artifacts/intent_head/<name>/<version> --name <name> --version <semver>` | Exports the checkpoint to an `intent_head` artifact: ONNX (fp32 by default; `--quantization int8_dynamic` is opt-in and parity-gated), `tokenizer.json`, labels, config and manifest, after a torch vs ONNX Runtime parity check (`[train]` + `[export]`). `--embedder` exports the fine-tuned encoder alone as an `embedder` artifact for the Stage-1 kNN. |
 | `caliban-ml router knn-eval --train a.npz --val b.npz [--test c.npz] --out calib.json` | Fits the pure-numpy kNN baseline, calibrates the temperature, and picks the OOS gate and per-label exit thresholds. Prints metrics. |
 | `caliban-ml router profile results.jsonl --name p --version 1.0.0 --out artifacts/router_profile/p/1.0.0` | Turns probe results into a UniRoute-style `router_profile` artifact. |
 | `caliban-ml probes run data/probes/sample.yaml --base-url http://localhost:8080/v1 --model <id> --out results/x.jsonl` | Runs a probe set against any OpenAI-compatible endpoint and scores the replies. |
@@ -151,7 +151,7 @@ No trained router or classifier weights are published. What exists today:
 - **Stage-1 kNN calibration** (implemented, pure numpy): `router embed` + `router knn-eval` produce the calibration block for an `intent_head` artifact that `requires` a specific embedder. The exemplars themselves are tenant data that live in core's vector index and are not shipped.
 - **Router profiles** (implemented): `router profile` builds a `router_profile` artifact from probe results.
 - **Stage-2 classifier training** (implemented, `[train]`): `router train` / `router.train.train_intent_head`. Backbones: `setfit` (contrastive sentence-encoder fine-tune plus a logistic head) and `modernbert_multihead` (a ModernBERT-architecture encoder, for example ModernBERT-base or the multilingual mmBERT-base, with an `intent` softmax head and an explicit `oos` sigmoid head). Every run is scored next to the Stage-1 kNN on the same splits, on held-out intents and on extra eval sets. See [Stage-2 intent heads](#stage-2-intent-heads).
-- **ONNX export and INT8 quantisation** (implemented, `[train]` + `[export]`): `router export` / `router.export.export_onnx`, opset 17, dynamic batch and sequence axes, INT8 dynamic quantisation, and a parity check through the shipped `tokenizer.json`.
+- **ONNX export and INT8 quantisation** (implemented, `[train]` + `[export]`): `router export` / `router.export.export_onnx`, opset 17, dynamic batch and sequence axes, fp32 by default with opt-in INT8 (weight MatMuls only, per channel; ORT's default dynamic INT8 broke ModernBERT-base), and a parity check through the shipped `tokenizer.json`. `router export --embedder` exports the fine-tuned encoder as an `embedder` artifact.
 
 ### Stage-1 kNN semantics (shared with Rust)
 
@@ -187,9 +187,10 @@ data (intents YAML/JSON; licence-checked)       e.g. core's crates/caliban-route
                                (the same selection code as the Stage-1 kNN); oos head: temperature + threshold
   -> baselines                 Stage-1 kNN on the same splits, over base and fine-tuned embeddings
   -> checkpoint                runs/<dir>/{caliban_checkpoint.json, encoder/, heads.safetensors, splits.json}
-  -> export_onnx      [export] opset 17, dynamic batch/seq, INT8 dynamic quantisation
+  -> export_onnx      [export] opset 17, dynamic batch/seq, fp32 (opt-in INT8 dynamic, weight MatMuls only)
   -> parity check              shipped tokenizer.json ids == training tokenizer ids; torch vs ORT fp32
-                               max|diff| <= 1e-3; INT8 argmax agreement >= 99.5% -> manifest metrics
+                               max|diff| <= 1e-3 (padded and single-text batches);
+                               INT8 argmax agreement >= 99.5% -> manifest metrics
   -> build manifest + verify --strict
 ```
 
@@ -203,7 +204,9 @@ The exported graph is `encoder -> pool (mean | cls) -> [L2 normalise] -> Linear 
 
 Decision rule for the primary head (identical to Stage 1 with `oos_score = max_probability`): out-of-scope if `p_max < calibration.oos_threshold`, else exit with the argmax if `p_max >= thresholds[label]` (else `default_threshold`), else fall through to Stage 3. `config.json` carries `type = "onnx_classifier"`, so core's Stage-1 loader refuses the artifact (it already rejects `intent_head` manifests that carry `onnx`).
 
-`scripts/stage2_gpu_run.sh` does the whole run on a fresh CUDA Linux box (install, CPU smoke test, pinned base-model fetch, train both backbones on ModernBERT-base and mmBERT-base, kNN baselines, held-out intents, French and Arabic eval, INT8 export with parity, strict verify). Design notes and results (pending the GPU run) are in [`docs/router-stage2-results.md`](docs/router-stage2-results.md).
+`scripts/stage2_gpu_run.sh` does the whole run on a fresh CUDA Linux box (install, CPU smoke test, pinned base-model fetch, train both backbones on ModernBERT-base and mmBERT-base, kNN baselines, held-out intents, French and Arabic eval, fp32 export with parity plus an INT8 probe, embedder export, strict verify; it sets `HOME` when the host left it unset, as AWS SSM does).
+
+**Results** (AWS L4, [`docs/router-stage2-results.md`](docs/router-stage2-results.md)): on core's 220-utterance exemplar set no trained Stage-2 head beats the Stage-1 kNN over the same fine-tuned encoder, so the head is not worth shipping on this data. The best configuration is a fine-tuned mmBERT-base encoder used as the kNN embedder (test 0.905, French 1.00, Arabic 0.86, held-out-intent rejection 0.58); ModernBERT-base reaches only 0.14 on Arabic. The data set is too small to decide more, and out-of-scope rejection is the main gap.
 
 ## The artifact contract (manifests and model cards)
 
@@ -320,7 +323,7 @@ scripts/
   router_stage2_eval.py        Stage-2 heads vs the kNN baseline on core's exemplars (GPU)
   stage2_gpu_run.sh            end-to-end Stage-2 run on a fresh CUDA box
 docs/
-  router-stage2-results.md     Stage-2 design, evaluation protocol and results (pending GPU run)
+  router-stage2-results.md     Stage-2 design, evaluation protocol and measured results
 schemas/                       JSON Schemas consumed by core (generated, drift-tested)
   artifact-manifest.schema.json
   router-profile.schema.json
@@ -346,8 +349,9 @@ artifacts/                     local build output; git-ignored, empty in the rep
 Open items, marked `TODO(...)` in the code:
 
 - Stage-2 heads beyond `intent` and `oos` (difficulty or quality gap, reasoning, jailbreak, PII presence) need labels the intent dataset does not carry yet; `train_intent_head` refuses them.
-- Core has no Stage-2 loader yet (`caliban-route` documents Stage 2 as a TODO); the artifact layout above is what it should bind.
-- No packaging script for an ONNX `embedder` artifact yet (the ONNX embedder backend for `router embed` exists).
+- Core has no Stage-2 loader (`caliban-route` documents Stage 2 as a TODO), and the measured results do not justify one yet. The more useful core change is an in-process ONNX `PromptEmbedder` that loads an `embedder` artifact (for example the fine-tuned mmBERT encoder from `router export --embedder`); see [`docs/router-stage2-results.md`](docs/router-stage2-results.md).
+- INT8 for ModernBERT-family encoders is unproven on the real models: the default export is fp32, and every GPU run probes INT8 agreement.
+- Stage-2 evaluation needs more exemplars, more OOS examples and several seeds before finer model choices.
 - `TODO(pii/gliner2)`, `TODO(pii/gliner)`, `TODO(pii/presidio)`: a GLiNER2 adapter, sliding windows, and an explicit Presidio NLP engine config for the eval harness.
 - `TODO(judge)`: judge calibration against human labels, and bias controls.
 - `TODO(signing)`: a CI integration test for minisign/cosign, plus signature verification in the Rust loader.
