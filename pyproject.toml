@@ -34,11 +34,11 @@ train = [
     "datasets>=3.0",
     "gliner>=0.2.16",
 ]
-# ONNX export, quantization and parity checks.
+# ONNX export, quantization and parity checks (exporting a trained head also needs [train]).
 export = [
     "onnx>=1.17",
     "onnxruntime>=1.20",
-    "optimum[onnxruntime]>=1.23",
+    "tokenizers>=0.20",  # parity runs through the shipped tokenizer.json, as Rust does
 ]
 # Presidio adapter for the PII eval harness (needs a locally installed spaCy model).
 presidio = [
@@ -58,6 +58,10 @@ packages = ["src/caliban_ml"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+    "integration: needs the [train] and [export] extras (skipped when they are missing)",
+    "gpu: needs CUDA and a local base model (CALIBAN_ML_GPU_BASE_MODEL); skipped otherwise",
+]
 
 [tool.ruff]
 line-length = 100

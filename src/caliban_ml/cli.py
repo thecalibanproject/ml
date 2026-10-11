@@ -150,24 +150,128 @@ def router_knn_eval(
 @router_app.command("embed")
 def router_embed(
     dataset: Path = typer.Option(..., exists=True, help="Intent exemplar YAML."),
-    model_dir: Path = typer.Option(..., exists=True, file_okay=False,
-                                   help="Local sentence-transformers model dir ([train] extra)."),
     out_prefix: Path = typer.Option(..., help="Writes <prefix>.train.npz and <prefix>.val.npz."),
+    model_dir: Path | None = typer.Option(
+        None, exists=True, file_okay=False,
+        help="Local sentence-transformers model dir ([train] extra)."),
+    embedder_artifact: Path | None = typer.Option(
+        None, exists=True, file_okay=False,
+        help="Shipped embedder artifact dir ([export] extra): the vector space core uses."),
     val_fraction: float = typer.Option(0.3),
     seed: int = typer.Option(0),
-    prefix: str = typer.Option("", help="Query prefix, e.g. 'query: ' for E5 models."),
+    prefix: str = typer.Option("", help="Query prefix for --model-dir, e.g. 'query: ' for E5. "
+                                        "Artifacts use their manifest's query_prefix."),
 ) -> None:
     """Split + embed an intent dataset into .npz files for knn-eval."""
     from caliban_ml.router.dataset import IntentDataset
-    from caliban_ml.router.embed import embed_sentence_transformers, save_npz
+    from caliban_ml.router.embed import (
+        embed_onnx_artifact,
+        embed_sentence_transformers,
+        save_npz,
+    )
 
+    if (model_dir is None) == (embedder_artifact is None):
+        raise typer.BadParameter("pass exactly one of --model-dir or --embedder-artifact")
     ds = IntentDataset.from_yaml(dataset)
     for split, (texts, labels) in zip(("train", "val"), ds.split(val_fraction, seed),
                                       strict=True):
-        emb = embed_sentence_transformers(model_dir, texts, prefix=prefix)
+        if embedder_artifact is not None:
+            emb = embed_onnx_artifact(embedder_artifact, texts)
+        else:
+            emb = embed_sentence_transformers(model_dir, texts, prefix=prefix)
         path = Path(f"{out_prefix}.{split}.npz")
         save_npz(path, emb, labels, texts)
         typer.echo(f"wrote {path} ({len(texts)} rows)")
+
+
+class Backbone(StrEnum):
+    setfit = "setfit"
+    modernbert_multihead = "modernbert_multihead"
+
+
+class Quant(StrEnum):
+    none = "none"
+    int8_dynamic = "int8_dynamic"
+
+
+@router_app.command("train")
+def router_train(
+    dataset: Path = typer.Option(..., exists=True, help="Intent exemplar YAML (or JSON)."),
+    base_model_path: Path = typer.Option(..., exists=True, file_okay=False,
+                                         help="Local base model dir (pinned revision)."),
+    base_model_id: str = typer.Option(..., help="e.g. answerdotai/ModernBERT-base"),
+    base_model_revision: str = typer.Option(..., help="Pinned commit of the weights."),
+    base_model_licence: str = typer.Option(..., help="SPDX id from the model card."),
+    out: Path = typer.Option(..., help="Checkpoint output directory."),
+    backbone: Backbone = typer.Option(Backbone.modernbert_multihead),
+    epochs: int = typer.Option(10, min=1),
+    learning_rate: float = typer.Option(5e-5),
+    batch_size: int = typer.Option(16, min=1),
+    max_length: int = typer.Option(128, min=8),
+    setfit_iterations: int = typer.Option(20, min=1),
+    seed: int = typer.Option(13),
+    device: str = typer.Option("auto", help="auto, cuda or cpu."),
+    held_out_intent: list[str] = typer.Option(
+        [], help="Intent to leave out of training and score as OOS (repeatable)."),
+    extra_eval: list[str] = typer.Option(
+        [], help="NAME=PATH of an intent YAML that is only scored (repeatable)."),
+    dataset_name: str = typer.Option("intents"),
+    dataset_source: str = typer.Option(""),
+    dataset_licence: str = typer.Option("caliban-internal"),
+    synthetic: bool = typer.Option(True, help="Exemplars are synthetic (data card)."),
+    language: list[str] = typer.Option(["en"], help="BCP-47 code (repeatable)."),
+    knn_baseline: bool = typer.Option(True, help="Also score Stage-1 kNN baselines."),
+) -> None:
+    """Train a Stage-2 intent head ([train] extra) and print its metrics."""
+    from caliban_ml.router.dataset import IntentDataset
+    from caliban_ml.router.train import IntentHeadConfig, train_intent_head
+
+    extra = {}
+    for item in extra_eval:
+        name, sep, path = item.partition("=")
+        if not sep:
+            raise typer.BadParameter(f"--extra-eval expects NAME=PATH, got {item!r}")
+        ds_extra = IntentDataset.from_yaml(path)
+        extra[name] = ds_extra.examples(include_oos=True)
+    cfg = IntentHeadConfig(
+        base_model_path=base_model_path, base_model_id=base_model_id,
+        base_model_revision=base_model_revision, base_model_licence=base_model_licence,
+        backbone=backbone.value, epochs=epochs, learning_rate=learning_rate,
+        batch_size=batch_size, max_length=max_length, setfit_iterations=setfit_iterations,
+        seed=seed, device=device, held_out_intents=tuple(held_out_intent),
+        dataset_name=dataset_name, dataset_source=dataset_source or str(dataset),
+        dataset_licence=dataset_licence, dataset_synthetic=synthetic,
+        languages=tuple(language), knn_baseline=knn_baseline, output_dir=out)
+    ckpt = train_intent_head(IntentDataset.from_yaml(dataset), cfg, extra_eval=extra)
+    typer.echo((ckpt / "metrics.json").read_text())
+    typer.echo(f"wrote checkpoint {ckpt}")
+
+
+@router_app.command("export")
+def router_export(
+    checkpoint: Path = typer.Option(..., exists=True, file_okay=False,
+                                    help="Checkpoint dir from `router train`."),
+    out: Path = typer.Option(..., help="Artifact dir, e.g. artifacts/intent_head/<name>/<ver>."),
+    name: str = typer.Option(..., help="Artifact name (slug)."),
+    version: str = typer.Option(..., help="Semver."),
+    quantization: Quant = typer.Option(Quant.int8_dynamic),
+    opset: int = typer.Option(17, min=17),
+    parity_atol: float = typer.Option(1e-3),
+    min_argmax_agree: float = typer.Option(0.995),
+    overwrite: bool = typer.Option(False),
+) -> None:
+    """Export a checkpoint to an ONNX intent_head artifact with a parity check."""
+    from caliban_ml.artifacts import load_manifest
+    from caliban_ml.router.export import export_onnx
+
+    d = export_onnx(checkpoint, out, name=name, version=version, opset=opset,
+                    quantization=quantization.value, parity_atol=parity_atol,
+                    min_argmax_agree=min_argmax_agree, overwrite=overwrite)
+    m = load_manifest(d)
+    typer.echo(json.dumps({k: v for k, v in m.metrics.items() if k.startswith(("export_",
+                                                                               "model_"))},
+                          indent=2))
+    typer.echo(f"wrote {d} ({m.kind.value} {m.name}@{m.version})")
 
 
 @router_app.command("profile")
