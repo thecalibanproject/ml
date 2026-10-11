@@ -1,0 +1,85 @@
+# French and Arabic evaluation prompts for core's built-in intent taxonomy
+# (core/crates/caliban-route/data/exemplars.default.json). Synthetic: written for Caliban,
+# no third-party text (licence: caliban-internal). Eval only: never train on this file.
+# Format: caliban_ml/router/dataset.py.
+version: 1
+intents:
+  chat:
+    utterances:
+      - bonjour, comment ça va aujourd'hui
+      - merci beaucoup, c'était très utile
+      - tu peux me conseiller un bon livre pour les vacances
+      - bonsoir, tu es là
+      - مرحبا، كيف حالك اليوم
+      - شكرا جزيلا، كان ذلك مفيدا جدا
+      - هل يمكنك أن تنصحني بكتاب جيد للسفر
+      - صباح الخير
+  code:
+    utterances:
+      - écris une fonction python qui supprime les doublons d'une liste
+      - pourquoi ce code rust ne compile pas
+      - convertis ce script bash en python
+      - ajoute des tests unitaires pour ce module typescript
+      - اكتب دالة بلغة بايثون لترتيب قائمة من الأرقام
+      - لماذا لا يعمل هذا الكود بلغة جافاسكريبت
+      - حوّل هذا السكربت من باش إلى بايثون
+      - أضف اختبارات وحدة لهذه الدالة
+  analytics:
+    utterances:
+      - combien de factures étaient en retard le mois dernier
+      - les dix meilleurs clients par chiffre d'affaires au troisième trimestre
+      - quel est le panier moyen par région cette année
+      - liste les comptes sans activité depuis 90 jours
+      - كم عدد الفواتير المتأخرة في الشهر الماضي
+      - أفضل عشرة عملاء حسب الإيرادات في الربع الثالث
+      - ما متوسط قيمة الطلب لكل منطقة هذا العام
+      - اعرض الحسابات التي لم يكن لها أي نشاط منذ تسعين يوما
+  summarize:
+    utterances:
+      - résume ce fil de discussion par e-mail
+      - donne-moi les points clés de ce contrat
+      - fais un résumé d'un paragraphe de ce rapport
+      - résume les notes de la réunion ci-dessous
+      - لخص سلسلة الرسائل هذه
+      - أعطني النقاط الرئيسية في هذا العقد
+      - اكتب ملخصا من فقرة واحدة لهذا التقرير
+      - لخص محضر الاجتماع التالي
+  extraction:
+    utterances:
+      - extrais le numéro de facture, la date et le montant total de ce texte
+      - récupère l'adresse de livraison dans ce message
+      - transforme ce reçu en objet json
+      - liste tous les noms d'entreprises et les montants en json
+      - استخرج رقم الفاتورة والتاريخ والمبلغ الإجمالي من هذا النص
+      - استخرج عنوان الشحن من هذه الرسالة
+      - حوّل هذا الإيصال إلى كائن json
+      - استخرج أسماء الشركات والمبالغ في جدول
+  translate:
+    utterances:
+      - traduis ce paragraphe en anglais
+      - comment dit-on merci en japonais
+      - traduis cet e-mail en espagnol en gardant un ton formel
+      - peux-tu traduire ce menu en allemand
+      - ترجم هذه الفقرة إلى الإنجليزية
+      - كيف أقول شكرا باليابانية
+      - ترجم هذا البريد الإلكتروني إلى الفرنسية بأسلوب رسمي
+      - ترجم قائمة الطعام هذه إلى الألمانية
+  reasoning:
+    utterances:
+      - résous étape par étape un train part à 15h à 80 km/h, quand le rattrape-t-on
+      - démontre que la racine carrée de deux est irrationnelle
+      - si tous les A sont des B et certains B sont des C, certains A sont-ils des C
+      - combien de façons y a-t-il de ranger cinq livres sur une étagère, explique ton raisonnement
+      - حل خطوة بخطوة، قطار يغادر الساعة الثالثة بسرعة ثمانين كيلومترا في الساعة، متى يلحق به
+      - أثبت أن الجذر التربيعي للعدد اثنين عدد غير نسبي
+      - إذا كان كل أ هو ب وبعض ب هو ج، فهل بعض أ هو ج
+      - كم طريقة لترتيب خمسة كتب على رف، اشرح طريقة تفكيرك
+oos:
+  - dessine-moi un chat qui porte un chapeau
+  - allume les lumières du salon
+  - mets une alarme à 6 heures
+  - commande-moi une pizza
+  - ارسم لي صورة قطة ترتدي قبعة
+  - أطفئ الأضواء في غرفة المعيشة
+  - اضبط منبها على الساعة السادسة صباحا
+  - اطلب لي بيتزا
